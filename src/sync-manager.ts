@@ -659,7 +659,9 @@ export default class SyncManager {
         if (files.length > 0 || folders.length > 0) {
           break;
         }
-        await this.vault.adapter.rmdir(folder, false);
+        // Recursive because Obsidian desktop's non-recursive rmdir can't
+        // remove directories at all. The folder was just checked to be empty.
+        await this.vault.adapter.rmdir(folder, true);
       }
     } catch (err) {
       await this.logger.warn("Failed to remove empty folder", `${err}`);

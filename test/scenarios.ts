@@ -147,7 +147,7 @@ export const scenarios: Scenario[] = [
       await syncOk(a, b);
       assert.deepEqual(await b.notes(), { "keep.md": "k" });
       assert.equal(b.exists("dir"), false, "empty folder removed");
-      assert.equal(b.read(".trash/dir/gone.md"), "g");
+      assert.equal(b.read(".trash/gone.md"), "g");
       assert.deepEqual(await remoteNotes(ctx.remote), { "keep.md": "k" });
       // And it stays deleted
       await syncOk(a, b);

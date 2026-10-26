@@ -85,12 +85,18 @@ class Adapter {
     await fs.unlink(this.full(p));
   }
   async rmdir(p: string, recursive: boolean) {
-    if (recursive) await fs.rm(this.full(p), { recursive: true });
-    else await fs.rmdir(this.full(p));
+    // Same as Obsidian desktop: fs.rm, which fails on directories unless recursive
+    await fs.rm(this.full(p), { recursive });
   }
   async trashLocal(p: string) {
-    const target = this.full(`.trash/${normalizePath(p)}`);
-    await fs.mkdir(path.dirname(target), { recursive: true });
+    // Like Obsidian: flat in .trash, " 2", " 3"... appended on name clashes
+    await fs.mkdir(this.full(".trash"), { recursive: true });
+    const ext = path.extname(p);
+    const name = path.basename(p, ext);
+    let target = this.full(`.trash/${name}${ext}`);
+    for (let n = 2; existsSync(target); n++) {
+      target = this.full(`.trash/${name} ${n}${ext}`);
+    }
     await fs.rename(this.full(p), target);
   }
 }

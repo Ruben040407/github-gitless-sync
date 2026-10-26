@@ -1,6 +1,18 @@
-# GitHub Gitless Sync
+# GitHub Gitless Sync (3-way fork)
 
 Plugin to sync a GitHub repository with an Obsidian vault.
+
+> **This is a fork** of [silvanocerza/github-gitless-sync](https://github.com/silvanocerza/github-gitless-sync)
+> v1.0.7 with a rewritten sync engine: every device does a 3-way comparison between
+> its own record of the last sync, its local files and the real git tree, instead of
+> sharing one metadata file through the repo. This fixes deletions not propagating,
+> the `Cannot set properties of undefined (setting 'sha')` crash, edits reverted by
+> a second sync and empty commits. Same plugin id, so settings carry over.
+> See [NOTES.md](./NOTES.md) for details and [SWITCHING.md](./SWITCHING.md) for
+> moving existing devices over.
+>
+> Install with [BRAT](https://github.com/TfTHacker/obsidian42-brat):
+> *Add beta plugin* → `Ruben040407/github-gitless-sync`.
 
 I highly recommend not using this plugin with another sync service.
 This might create problems for this plugin when determining what needs to be synced between remote repository and local vault.
