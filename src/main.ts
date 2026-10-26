@@ -96,19 +96,13 @@ export default class GitHubSyncPlugin extends Plugin {
       this.onConflicts.bind(this),
       this.logger,
     );
-    await this.syncManager.loadMetadata();
+    await this.syncManager.loadState();
 
     if (this.settings.syncStrategy == "interval") {
       this.restartSyncInterval();
     }
 
     this.app.workspace.onLayoutReady(async () => {
-      // Create the events handling only after tha layout is ready to avoid
-      // getting spammed with create events.
-      // See the official Obsidian docs:
-      // https://docs.obsidian.md/Reference/TypeScript+API/Vault/on('create')
-      this.syncManager.startEventsListener(this);
-
       // Load the ribbons after layout is ready so they're shown after the core
       // buttons
       if (this.settings.showStatusBarItem) {
@@ -121,6 +115,10 @@ export default class GitHubSyncPlugin extends Plugin {
 
       if (this.settings.showSyncRibbonButton) {
         this.showSyncRibbonIcon();
+      }
+
+      if (this.settings.syncOnStartup) {
+        await this.sync();
       }
     });
 
@@ -151,22 +149,12 @@ export default class GitHubSyncPlugin extends Plugin {
       new Notice("Sync plugin not configured");
       return;
     }
-    if (this.settings.firstSync) {
-      const notice = new Notice("Syncing...");
-      try {
-        await this.syncManager.firstSync();
-        this.settings.firstSync = false;
-        this.saveSettings();
-        // Shown only if sync doesn't fail
-        new Notice("Sync successful", 5000);
-      } catch (err) {
-        // Show the error to the user, it's not automatically dismissed to make sure
-        // the user sees it.
-        new Notice(`Error syncing. ${err}`);
-      }
-      notice.hide();
-    } else {
-      await this.syncManager.sync();
+    // There's no special first sync anymore, the first sync of this version
+    // merges local and remote files without deleting anything.
+    const success = await this.syncManager.sync();
+    if (success && this.settings.firstSync) {
+      this.settings.firstSync = false;
+      await this.saveSettings();
     }
     this.updateStatusBarItem();
   }
@@ -213,16 +201,10 @@ export default class GitHubSyncPlugin extends Plugin {
       return;
     }
 
-    let state = "Unknown";
-    const fileData = this.syncManager.getFileMetadata(activeFile.path);
-    if (!fileData) {
-      state = "Untracked";
-    } else if (fileData.dirty) {
-      state = "Outdated";
-    } else if (!fileData.dirty) {
-      state = "Up to date";
-    }
-
+    const state = this.syncManager.getFileStatus(
+      activeFile.path,
+      activeFile.stat.mtime,
+    );
     this.statusBarItem.setText(`GitHub: ${state}`);
   }
 
@@ -301,6 +283,6 @@ export default class GitHubSyncPlugin extends Plugin {
   async reset() {
     this.settings = DEFAULT_SETTINGS;
     this.saveSettings();
-    await this.syncManager.resetMetadata();
+    await this.syncManager.resetState();
   }
 }

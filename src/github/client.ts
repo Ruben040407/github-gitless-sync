@@ -50,7 +50,7 @@ export type BlobFile = {
 /**
  * Custom error to make some stuff easier
  */
-class GithubAPIError extends Error {
+export class GithubAPIError extends Error {
   constructor(
     public status: number,
     message: string,
@@ -114,6 +114,119 @@ export default class GithubClient {
         {},
       );
     return { files, sha: response.json.sha };
+  }
+
+  /**
+   * Gets the commit the branch points to and that commit's tree.
+   * Throws a GithubAPIError with status 404 or 409 if the repo has no commits.
+   */
+  async getBranch({ retry = false, maxRetries = 5 } = {}): Promise<{
+    commitSha: string;
+    treeSha: string;
+  }> {
+    const response = await retryUntil(
+      async () => {
+        return requestUrl({
+          // The branch is the only mutable thing we read. GitHub responses are
+          // cacheable for 60s, a cached one would make us act on an old state.
+          url: `https://api.github.com/repos/${this.settings.githubOwner}/${this.settings.githubRepo}/branches/${encodeURIComponent(this.settings.githubBranch)}?nocache=${Date.now()}`,
+          headers: this.headers(),
+          throw: false,
+        });
+      },
+      (res) => res.status !== 422,
+      retry ? maxRetries : 0,
+    );
+
+    if (response.status < 200 || response.status >= 400) {
+      await this.logger.error("Failed to get branch", response.status);
+      throw new GithubAPIError(
+        response.status,
+        `Failed to get branch, status ${response.status}`,
+      );
+    }
+    return {
+      commitSha: response.json.commit.sha,
+      treeSha: response.json.commit.commit.tree.sha,
+    };
+  }
+
+  /**
+   * Compares two commits.
+   *
+   * @returns "identical", "ahead" (head is newer than base), "behind" or
+   * "diverged", null if they share no history or base doesn't exist anymore
+   */
+  async compareCommits({
+    base,
+    head,
+  }: {
+    base: string;
+    head: string;
+  }): Promise<string | null> {
+    const response = await requestUrl({
+      url: `https://api.github.com/repos/${this.settings.githubOwner}/${this.settings.githubRepo}/compare/${base}...${head}?per_page=1`,
+      headers: this.headers(),
+      throw: false,
+    });
+    if (response.status === 404) {
+      return null;
+    }
+    if (response.status < 200 || response.status >= 400) {
+      await this.logger.error("Failed to compare commits", response.status);
+      throw new GithubAPIError(
+        response.status,
+        `Failed to compare commits, status ${response.status}`,
+      );
+    }
+    return response.json.status;
+  }
+
+  /**
+   * Gets all the blobs in a tree, recursively.
+   *
+   * @param sha The SHA of the tree
+   * @returns Map of file path to blob SHA
+   */
+  async getTree({
+    sha,
+    retry = false,
+    maxRetries = 5,
+  }: {
+    sha: string;
+    retry?: boolean;
+    maxRetries?: number;
+  }): Promise<{ [path: string]: string }> {
+    const response = await retryUntil(
+      async () => {
+        return requestUrl({
+          url: `https://api.github.com/repos/${this.settings.githubOwner}/${this.settings.githubRepo}/git/trees/${sha}?recursive=1`,
+          headers: this.headers(),
+          throw: false,
+        });
+      },
+      (res) => res.status !== 422,
+      retry ? maxRetries : 0,
+    );
+
+    if (response.status < 200 || response.status >= 400) {
+      await this.logger.error("Failed to get tree", response.status);
+      throw new GithubAPIError(
+        response.status,
+        `Failed to get tree, status ${response.status}`,
+      );
+    }
+    if (response.json.truncated) {
+      // Partial trees would make missing files look deleted, never sync on those
+      throw new Error("Remote repository is too big, tree listing truncated");
+    }
+    const files: { [path: string]: string } = {};
+    for (const item of response.json.tree as GetTreeResponseItem[]) {
+      if (item.type === "blob") {
+        files[item.path] = item.sha;
+      }
+    }
+    return files;
   }
 
   /**

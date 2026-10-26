@@ -8,6 +8,8 @@ const TEXT_EXTENSIONS = [
   ".csv",
   ".js",
   ".log",
+  ".canvas",
+  ".base",
 ] as const;
 
 /**
