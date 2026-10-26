@@ -1,6 +1,7 @@
 import {
   EventRef,
   Plugin,
+  TAbstractFile,
   WorkspaceLeaf,
   normalizePath,
   Notice,
@@ -9,10 +10,14 @@ import { GitHubSyncSettings, DEFAULT_SETTINGS } from "./settings/settings";
 import GitHubSyncSettingsTab from "./settings/tab";
 import SyncManager, { ConflictFile, ConflictResolution } from "./sync-manager";
 import Logger from "./logger";
+import AutoSync from "./auto-sync";
 import {
   ConflictsResolutionView,
   CONFLICTS_RESOLUTION_VIEW_TYPE,
 } from "./views/conflicts-resolution/view";
+
+// Sync when Obsidian comes back to the foreground, unless it synced this recently
+const RESUME_SYNC_AFTER_MS = 30 * 1000;
 
 export default class GitHubSyncPlugin extends Plugin {
   settings: GitHubSyncSettings;
@@ -39,6 +44,15 @@ export default class GitHubSyncPlugin extends Plugin {
   // and it gets destroyed.
   // By keeping them here we can recreate it easily.
   private conflicts: ConflictFile[] = [];
+
+  // Syncs a few seconds after the last edit
+  private autoSync = new AutoSync(async () => {
+    if (this.syncManager.isSyncing()) {
+      return false;
+    }
+    await this.sync({ quiet: true });
+    return true;
+  });
 
   async onUserEnable() {
     if (
@@ -117,8 +131,37 @@ export default class GitHubSyncPlugin extends Plugin {
         this.showSyncRibbonIcon();
       }
 
+      // Register vault events only now, Obsidian fires a create event for
+      // every file while loading the vault.
+      for (const name of ["create", "modify", "delete"] as const) {
+        this.registerEvent(
+          this.app.vault.on(name as "create", (file: TAbstractFile) =>
+            this.onVaultChange(file.path),
+          ),
+        );
+      }
+      this.registerEvent(
+        this.app.vault.on("rename", (file: TAbstractFile, oldPath: string) =>
+          this.onVaultChange(file.path, oldPath),
+        ),
+      );
+
+      // On mobile Obsidian is usually resumed rather than restarted.
+      this.registerDomEvent(document, "visibilitychange", async () => {
+        if (document.visibilityState === "hidden") {
+          // The app is being backgrounded, timers won't run anymore:
+          // push the pending edits now.
+          await this.autoSync.flush();
+        } else if (
+          this.settings.syncOnStartup &&
+          Date.now() - this.syncManager.lastSyncTime() > RESUME_SYNC_AFTER_MS
+        ) {
+          await this.sync({ quiet: true });
+        }
+      });
+
       if (this.settings.syncOnStartup) {
-        await this.sync();
+        await this.sync({ quiet: true });
       }
     });
 
@@ -127,7 +170,7 @@ export default class GitHubSyncPlugin extends Plugin {
       name: "Sync with GitHub",
       repeatable: false,
       icon: "refresh-cw",
-      callback: this.sync.bind(this),
+      callback: () => this.sync(),
     });
 
     this.addCommand({
@@ -139,19 +182,51 @@ export default class GitHubSyncPlugin extends Plugin {
     });
   }
 
-  async sync() {
+  /**
+   * Called for every file change in the vault, schedules a sync if enabled.
+   */
+  private onVaultChange(...paths: string[]) {
+    if (!this.settings.syncOnEdit || !this.isConfigured()) {
+      return;
+    }
+    const relevant = paths.some(
+      (p) =>
+        p !== undefined &&
+        this.syncManager.isSyncable(p) &&
+        !this.syncManager.isOwnChange(p),
+    );
+    if (relevant) {
+      this.autoSync.schedule(Math.max(1, this.settings.syncOnEditDelay) * 1000);
+    }
+  }
+
+  isConfigured(): boolean {
+    return !(
+      this.settings.githubToken === "" ||
+      this.settings.githubOwner === "" ||
+      this.settings.githubRepo === "" ||
+      this.settings.githubBranch === ""
+    );
+  }
+
+  /**
+   * @param quiet Automatic sync, see SyncManager.sync
+   */
+  async sync({ quiet = false }: { quiet?: boolean } = {}) {
     if (
       this.settings.githubToken === "" ||
       this.settings.githubOwner === "" ||
       this.settings.githubRepo === "" ||
       this.settings.githubBranch === ""
     ) {
-      new Notice("Sync plugin not configured");
+      if (!quiet) {
+        new Notice("Sync plugin not configured");
+      }
       return;
     }
     // There's no special first sync anymore, the first sync of this version
     // merges local and remote files without deleting anything.
-    const success = await this.syncManager.sync();
+    const success = await this.syncManager.sync({ quiet });
     if (success && this.settings.firstSync) {
       this.settings.firstSync = false;
       await this.saveSettings();
@@ -161,6 +236,7 @@ export default class GitHubSyncPlugin extends Plugin {
 
   async onunload() {
     this.stopSyncInterval();
+    this.autoSync.cancel();
   }
 
   showStatusBarItem() {
@@ -215,7 +291,7 @@ export default class GitHubSyncPlugin extends Plugin {
     this.syncRibbonIcon = this.addRibbonIcon(
       "refresh-cw",
       "Sync with GitHub",
-      this.sync.bind(this),
+      () => this.sync(),
     );
   }
 

@@ -19,9 +19,12 @@ The repo history on GitHub is the second backup: every past version of every not
    version *Latest* → **Add plugin**. BRAT overwrites the 1.0.7 files in
    `.obsidian/plugins/github-gitless-sync/` and keeps `data.json` (your settings).
 3. Settings → Community plugins: the plugin is now called
-   **GitHub Gitless Sync (3-way fork)**, version **2.0.0**, and is enabled.
+   **GitHub Gitless Sync (3-way fork)**, version **2.1.0** or newer, and is enabled.
    If it still says 1.0.7, restart Obsidian.
 4. Tap the sync icon (ribbon) once.
+5. Settings → GitHub Gitless Sync: check **Sync after editing** is on (delay 5 s)
+   and **Sync on startup** is on. Keep the 5-minute interval: it picks up the other
+   devices' edits while you're only reading.
 
 ### What to check after the first sync on each device
 

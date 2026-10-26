@@ -8,6 +8,7 @@ import {
 } from "obsidian";
 import GitHubSyncPlugin from "src/main";
 import { copyToClipboard } from "src/utils";
+import { DEFAULT_SETTINGS } from "./settings";
 
 export default class GitHubSyncSettingsTab extends PluginSettingTab {
   plugin: GitHubSyncPlugin;
@@ -140,8 +141,44 @@ export default class GitHubSyncSettingsTab extends PluginSettingTab {
     );
 
     new Setting(containerEl)
+      .setName("Sync after editing")
+      .setDesc(
+        "Sync automatically a few seconds after you stop editing. Works next to the sync strategy above.",
+      )
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.plugin.settings.syncOnEdit)
+          .onChange(async (value) => {
+            this.plugin.settings.syncOnEdit = value;
+            editDelaySetting.setDisabled(!value);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    const editDelaySetting = new Setting(containerEl)
+      .setName("Delay after editing")
+      .setDesc(
+        "Seconds without changes before syncing. Obsidian saves about 2 seconds after you stop typing.",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("Seconds")
+          .setValue(this.plugin.settings.syncOnEditDelay.toString())
+          .onChange(async (value) => {
+            this.plugin.settings.syncOnEditDelay = Math.max(
+              1,
+              parseInt(value) || DEFAULT_SETTINGS.syncOnEditDelay,
+            );
+            await this.plugin.saveSettings();
+          }),
+      );
+    editDelaySetting.setDisabled(!this.plugin.settings.syncOnEdit);
+
+    new Setting(containerEl)
       .setName("Sync on startup")
-      .setDesc("Download up to date files from remote on startup")
+      .setDesc(
+        "Sync when Obsidian starts and when it comes back to the foreground",
+      )
       .addToggle((toggle) => {
         toggle
           .setValue(this.plugin.settings.syncOnStartup)

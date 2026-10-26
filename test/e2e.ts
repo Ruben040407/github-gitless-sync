@@ -53,6 +53,16 @@ async function headCommit(): Promise<string | null> {
   return res.json.commit.sha;
 }
 
+/** Moves the branch, then waits until GitHub serves the new head everywhere */
+async function moveBranch(sha: string, force: boolean) {
+  await ok("PATCH", `git/refs/heads/${branch}`, { sha, force });
+  // Reads right after a ref update can briefly return the old head
+  for (let seen = 0, i = 0; seen < 3 && i < 40; i++) {
+    seen = (await headCommit()) === sha ? seen + 1 : 0;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
 const remote: Remote = {
   async reset(files: Files) {
     const tree = await ok("POST", "git/trees", {
@@ -72,7 +82,7 @@ const remote: Remote = {
       tree: tree.sha,
       parents: [],
     });
-    await ok("PATCH", `git/refs/heads/${branch}`, { sha: commit.sha, force: true });
+    await moveBranch(commit.sha, true);
   },
   async files() {
     const head = await headCommit();
@@ -103,7 +113,7 @@ const remote: Remote = {
       tree: tree.sha,
       parents: [head],
     });
-    await ok("PATCH", `git/refs/heads/${branch}`, { sha: newCommit.sha });
+    await moveBranch(newCommit.sha, false);
   },
   head: headCommit,
 };

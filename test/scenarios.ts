@@ -375,6 +375,46 @@ export const scenarios: Scenario[] = [
     },
   },
   {
+    name: "files changed by a sync are recognized as the plugin's own",
+    async run(ctx) {
+      const { a, b } = await pair(ctx, { "x.md": "v1", "y.md": "y" });
+      await a.write("x.md", "v2");
+      await a.remove("y.md");
+      await a.write("z.md", "new on A");
+      await syncOk(a, b);
+      // Vault events for these must not trigger another sync on B
+      for (const p of ["x.md", "y.md", "z.md"]) {
+        assert.equal(b.manager.isOwnChange(p), true, p);
+      }
+      // A uploaded z.md, it's the user's change there
+      assert.equal(a.manager.isOwnChange("z.md"), false);
+    },
+  },
+  {
+    name: "automatic syncs show no notices, repeated errors only once",
+    fakeOnly: true,
+    async run(ctx) {
+      const { notices } = await import("./mock-obsidian");
+      const { a } = await pair(ctx, { "x.md": "v1" });
+      notices.length = 0;
+      await a.write("x.md", "v2");
+      assert.equal(await a.manager.sync({ quiet: true }), true);
+      assert.deepEqual(notices, []);
+      // Offline: every request fails
+      const fake = ctx.fake!;
+      const handle = fake.handle.bind(fake);
+      fake.handle = () => ({ status: 503, json: {} });
+      await a.write("x.md", "v3");
+      assert.equal(await a.manager.sync({ quiet: true }), false);
+      assert.equal(await a.manager.sync({ quiet: true }), false);
+      assert.equal(notices.length, 1, "same error shown once");
+      fake.handle = handle;
+      assert.equal(await a.manager.sync({ quiet: true }), true);
+      assert.equal(notices.length, 1);
+      assert.equal(await ctx.remote.files().then((f) => f["x.md"]), "v3");
+    },
+  },
+  {
     name: "migration from v1.0.7: first sync merges without deleting",
     async run(ctx) {
       // Remote as left by v1.0.7: shared metadata that wrongly says

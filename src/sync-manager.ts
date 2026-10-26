@@ -38,6 +38,9 @@ const CONCURRENCY = 4;
 // Cached hashes of files modified less than this before hashing are not trusted
 const RACY_WINDOW_MS = 2000;
 
+// Vault events this long after the plugin changed a file are its own
+const OWN_WRITE_WINDOW_MS = 5000;
+
 // How many times, and how long apart, to re-read a stale remote branch
 const STALE_RETRIES = 3;
 const STALE_RETRY_DELAY_MS = 2000;
@@ -81,6 +84,14 @@ export default class SyncManager {
   // of messy conflicts.
   private syncing: boolean = false;
 
+  // Last error shown by an automatic sync, so being offline doesn't show
+  // the same notice after every edit
+  private lastQuietError: string | null = null;
+
+  // Paths this plugin wrote or deleted, with the time. Vault events for these
+  // must not trigger another sync.
+  private ownWrites = new Map<string, number>();
+
   constructor(
     private vault: Vault,
     private settings: GitHubSyncSettings,
@@ -96,17 +107,45 @@ export default class SyncManager {
     await this.state.load();
   }
 
+  isSyncing(): boolean {
+    return this.syncing;
+  }
+
+  /** Time of the last successful sync, 0 if never */
+  lastSyncTime(): number {
+    return this.state.data.lastSync;
+  }
+
+  /**
+   * True if the plugin itself changed this path in the last few seconds,
+   * e.g. by downloading it.
+   */
+  isOwnChange(filePath: string): boolean {
+    const time = this.ownWrites.get(filePath);
+    return time !== undefined && Date.now() - time < OWN_WRITE_WINDOW_MS;
+  }
+
+  private markOwnWrite(filePath: string) {
+    const now = Date.now();
+    for (const [p, time] of this.ownWrites) {
+      if (now - time >= OWN_WRITE_WINDOW_MS) this.ownWrites.delete(p);
+    }
+    this.ownWrites.set(filePath, now);
+  }
+
   /**
    * Syncs local and remote files.
+   * @param quiet Automatic sync: no progress notices, errors shown briefly
+   * and not repeated
    * @returns true if the sync succeeded
    */
-  async sync(): Promise<boolean> {
+  async sync({ quiet = false }: { quiet?: boolean } = {}): Promise<boolean> {
     if (this.syncing) {
       await this.logger.info("Sync already in progress");
       return false;
     }
 
-    const notice = new Notice("Syncing...");
+    const notice = quiet ? null : new Notice("Syncing...");
     this.syncing = true;
     let success = false;
     try {
@@ -125,16 +164,26 @@ export default class SyncManager {
         }
       }
       success = true;
-      // Shown only if sync doesn't fail
-      new Notice("Sync successful", 5000);
+      this.lastQuietError = null;
+      if (!quiet) {
+        // Shown only if sync doesn't fail
+        new Notice("Sync successful", 5000);
+      }
     } catch (err) {
       await this.logger.error("Sync failed", `${err}`);
-      // Show the error to the user, it's not automatically dismissed to make sure
-      // the user sees it.
-      new Notice(`Error syncing. ${err}`);
+      if (!quiet) {
+        // Show the error to the user, it's not automatically dismissed to make sure
+        // the user sees it.
+        new Notice(`Error syncing. ${err}`);
+      } else if (`${err}` !== this.lastQuietError) {
+        new Notice(`Error syncing. ${err}`, 10000);
+      }
+      if (quiet) {
+        this.lastQuietError = `${err}`;
+      }
     } finally {
       this.syncing = false;
-      notice.hide();
+      notice?.hide();
     }
     return success;
   }
@@ -287,6 +336,7 @@ export default class SyncManager {
       const resolution = resolutions.get(filePath);
       if (resolution !== undefined) {
         // Write the resolved content locally and record what is on disk
+        this.markOwnWrite(filePath);
         await this.vault.adapter.write(normalizePath(filePath), resolution);
         const localSha = await this.refreshCache(filePath);
         base[filePath] = { local: localSha ?? remoteSha, remote: remoteSha };
@@ -627,6 +677,7 @@ export default class SyncManager {
   private async downloadFile(filePath: string, sha: string): Promise<string> {
     const blob = await this.client.getBlob({ sha, retry: true });
     const normalizedPath = normalizePath(filePath);
+    this.markOwnWrite(normalizedPath);
     const parts = normalizedPath.split("/");
     if (parts.length > 1) {
       const fileFolder = parts.slice(0, -1).join("/");
@@ -647,6 +698,7 @@ export default class SyncManager {
    */
   private async deleteLocalFile(filePath: string) {
     const normalizedPath = normalizePath(filePath);
+    this.markOwnWrite(normalizedPath);
     if (await this.vault.adapter.exists(normalizedPath)) {
       await this.vault.adapter.trashLocal(normalizedPath);
     }
@@ -659,6 +711,7 @@ export default class SyncManager {
         if (files.length > 0 || folders.length > 0) {
           break;
         }
+        this.markOwnWrite(folder);
         // Recursive because Obsidian desktop's non-recursive rmdir can't
         // remove directories at all. The folder was just checked to be empty.
         await this.vault.adapter.rmdir(folder, true);
@@ -693,7 +746,7 @@ export default class SyncManager {
       throw new Error("Sync interval is already running");
     }
     this.syncIntervalId = window.setInterval(
-      async () => await this.sync(),
+      async () => await this.sync({ quiet: true }),
       // Sync interval is set in minutes but setInterval expects milliseconds
       minutes * 60 * 1000,
     );

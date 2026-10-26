@@ -74,6 +74,47 @@ The pure decision function is `decide()` in `src/sync-plan.ts`.
 - Kept: GitHub client, conflict views, settings tab, ribbon icons, status bar,
   interval sync, mobile support.
 
+### Automatic syncing (2.1.0)
+
+- **Sync after editing** (on by default): a sync runs `syncOnEditDelay` seconds
+  (default 5) after the last change in the vault. Obsidian saves about 2 s after you
+  stop typing, so a note is pushed roughly 7 s after your last keystroke. Changes
+  the plugin makes itself (downloads, deletions) and non-synced paths
+  (`workspace.json`, `.trash`, ...) don't trigger it (`src/auto-sync.ts`).
+- When the app goes to the background (phone: switching apps) with an edit still
+  waiting, it's pushed immediately, since timers stop running in the background.
+- **Sync on startup** now also syncs when Obsidian comes back to the foreground,
+  if the last sync is older than 30 s.
+- Automatic syncs (edit, startup/resume, interval) show no "Syncing..." /
+  "Sync successful" notices; an error is shown for 10 s and not repeated while it
+  keeps failing (e.g. offline). Manual syncs (ribbon, command) still show notices.
+- The interval is still useful to pick up other devices' changes while you only read.
+
+### Known limitations
+
+- **Not real-time.** Other devices see an edit after their next sync (interval,
+  startup/resume, or their own edits). Editing the same note on two devices between
+  syncs opens the conflict view.
+- **Phone only syncs while Obsidian is open.** No background sync (by design: no
+  extra app). An edit made right before Obsidian is killed may wait until the next start.
+- **Many small commits.** Every pause in writing becomes a commit. Harmless for
+  GitHub, but the history is noisy. Raise the delay if that bothers you.
+- **First sync after switching** brings back notes deleted while another device
+  still had them (see Migration). Delete them again.
+- **Binary conflicts** (images, PDFs): this device's version wins, the other one
+  stays in the GitHub history.
+- **Renames** are a delete plus a create: renaming a note on one device while
+  editing it on another leaves both (old name with the edit, new name).
+- **Large vaults:** the tree listing is limited by GitHub (~100k files); files are
+  downloaded one request each (4 in parallel), so a first sync of thousands of files
+  is slow. GitHub rejects files over 100 MB.
+- **Hidden files** (anything starting with `.`) are never synced; the config folder
+  only with "Sync configs" on. With "Sync configs" on, this plugin's own `data.json`
+  (with the token) is uploaded to the repo, as upstream did. Keep the repo private.
+- As of 2.1.0 not yet run inside the real Obsidian app (desktop or mobile). The
+  adapter calls were checked against Obsidian 1.14.5's code and the bundle was
+  smoke-tested with a stubbed Obsidian API.
+
 ### Migration from v1.0.7
 
 On the first sync after switching there is no state file yet, so every file is "new
@@ -91,7 +132,7 @@ and locally.
 
 ```bash
 npm ci
-npm test          # unit tests + 25 multi-device scenarios against an in-memory GitHub fake
+npm test          # unit tests + 27 multi-device scenarios against an in-memory GitHub fake
 npm run build     # main.js
 ```
 
@@ -109,10 +150,13 @@ simulate races). `E2E_ONLY=<part of a name>` runs a subset.
 1. Bump `version` in `manifest.json`, `manifest-beta.json`, `package.json`, add it to `versions.json`.
 2. Commit, then tag without a `v` prefix and push:
    ```bash
-   git tag 2.0.1
-   git push origin main 2.0.1
+   git tag 2.1.1
+   git push origin main 2.1.1
    ```
 3. `.github/workflows/release.yml` tests, builds and creates the GitHub release with
    `main.js`, `manifest.json`, `styles.css`. BRAT picks it up on its next update check.
+   GitHub disables workflows on new forks: enable them once in the repo's Actions tab.
+   Until then release by hand: `npm test && npm run build`, then
+   `gh release create <tag> --title <tag> main.js manifest.json styles.css`.
 
 Remotes: `origin` = Ruben040407/github-gitless-sync, `upstream` = silvanocerza/github-gitless-sync.
