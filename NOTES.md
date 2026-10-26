@@ -111,9 +111,20 @@ The pure decision function is `decide()` in `src/sync-plan.ts`.
 - **Hidden files** (anything starting with `.`) are never synced; the config folder
   only with "Sync configs" on. With "Sync configs" on, this plugin's own `data.json`
   (with the token) is uploaded to the repo, as upstream did. Keep the repo private.
-- As of 2.1.0 not yet run inside the real Obsidian app (desktop or mobile). The
-  adapter calls were checked against Obsidian 1.14.5's code and the bundle was
-  smoke-tested with a stubbed Obsidian API.
+- **Offline errors are long.** In airplane mode the notice shows the platform's raw
+  network error text. Cosmetic, left as is.
+- **Settings are per device** (`data.json` in each vault's plugin folder), e.g.
+  "Sync on startup" must be switched on on every device separately.
+
+### Real-app test (2026-10-26, 2.1.0)
+
+Three devices (2 Windows desktops, 1 phone) on one repo, 15-step script: sync on
+startup, sync after editing, push when the phone app is backgrounded, rename,
+delete reaching a device that still had the file unchanged (the old `Untitled.md`
+bug, the file went to `.trash`), offline edit vs. remote edit giving the conflict
+view with a merged result on all devices, two syncs in a row with no commit,
+folder deletion. All passed; verified against the commit history. Before that, the
+adapter calls were checked against Obsidian 1.14.5's code.
 
 ### Migration from v1.0.7
 
@@ -132,7 +143,7 @@ and locally.
 
 ```bash
 npm ci
-npm test          # unit tests + 27 multi-device scenarios against an in-memory GitHub fake
+npm test          # 16 unit tests + 27 multi-device scenarios against an in-memory GitHub fake
 npm run build     # main.js
 ```
 
